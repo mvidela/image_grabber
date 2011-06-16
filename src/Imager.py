@@ -9,14 +9,14 @@ images and to generate thumbnails.
 @author: Mariano Videla
 '''
 
-import sys
-import time
-from multiprocessing import Process, Queue
-from httplib import HTTPConnection
-from urlparse import urlparse
 from PIL import Image # Require PIL module.
+from httplib import HTTPConnection
+from multiprocessing import Process, Queue
+from urlparse import urlparse
+import sys
+import os.path
 
-from IMQueue import IMQueue
+from IMQueue import IMQueue, ProcessGroup
 
 headers = {'Content-Length': '0',
            'User-Agent' : 'Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.100 Safari/534.30'
@@ -46,14 +46,14 @@ def pretty_size( byte_count ):
     
     return '%.2f MB' %(kcount / 1024.0)
 
-def download_image(id, inQueue, outQueue):
+def download_image(id, downloadQueue, outQueue):
 
     conn = None    
     current_host = None
     
     while True:
         
-        queueObj = inQueue.get()
+        queueObj = downloadQueue.get()
         if queueObj is None:
             break
         
@@ -89,6 +89,18 @@ def download_image(id, inQueue, outQueue):
             
     print 'Download process finished'
     
+def create_thumbnail(i, downloadQueue, outQueue):
+
+    while True:
+        
+        imgFile, width, height = downloadQueue.get()
+        img = Image.open(imgFile)
+        img.thumbnail((width, height))
+         
+        img.save(imgFile + ".thumb")
+
+         
+
 
 def write_stdout(queue):
     '''Reads a input from the queue an writes it to the stout'''
@@ -102,48 +114,74 @@ def write_stdout(queue):
         sys.stdout.flush()
     
     #print 'Writer process ended'
+    
+def enqueue_items():
+    
+    while not sys.stdin.closed:
+        line = sys.stdin.readline()
+        if line:        
+            line = line.strip('\n')
+            downloadQueue.put([line, '/tmp/file0'])
+        else:
+            break
+
+    print 'Left the loop'
+            
 
 if __name__ == '__main__':
     
-    inQueue = IMQueue()
-    outQueue = IMQueue()
+    downloadQueue = IMQueue()
+    thumbQueue = IMQueue()
+    notifyQueue = IMQueue()
     
-    process_count = 20
+    download_process_count = 20
     if len(sys.argv) > 1:
-        process_count = int(sys.argv[1], 10)
+        download_process_count = int(sys.argv[1], 10)
+        
+    thumb_process_count = 5
+    if len(sys.argv) > 2:
+        thumb_process_count = int(sys.argv[2], 5)
     
-    consumers = []
+    downloaders = []
     
-    for i in range(process_count):
-        consumers.append(Process(target=download_image, args=(i, inQueue, outQueue)))
-        consumers[i].start()
+    downloadGroup = ProcessGroup(downloadQueue)
+    downloadGroup.start_process( target=download_image, 
+                                (downloadQueue, thumbQueue), 
+                                download_process_count )
+    
+    thumbnailGroup = ProcessGroup(thumbQueue)
+    downloadGroup.start_process( target=create_thumbnail, 
+                                (thumbQueue, notifyQueue), 
+                                thumb_process_count )
+    
+    for i in range(download_process_count):
+        downloaders.append(Process())
+        downloaders[i].start()
+        
+    for i in range(thumb_process_count):
+        downloaders.append(Process(target=create_thumbnail, args=(i, thumbQueue, notifyQueue)))
+        downloaders[i].start()
     
     
-    producer = Process(target=write_stdout, args=(outQueue,))
+    producer = Process(target=write_stdout, args=(notifyQueue,))
     producer.start()
 
     try:    
-        while not sys.stdin.closed:
-            line = sys.stdin.readline()
-            if line:        
-                line = line.strip('\n')
-                inQueue.put([line, '/tmp/file0'])
-            else:
-                break
-    
-        print 'Left the loop'
-            
-        inQueue.close(process_count)
-    
-        for consumer in consumers:
-            consumer.join() 
         
-        outQueue.close(1)
-        producer.join()
-    
-
+        enqueue_items()
+        
     except KeyboardInterrupt:
-        for p in consumers:
-            p.terminate()
-        consumer.terminate
+        #kill all involved processes
+        downloadGroup.kill()
+        thumbnailGroup.kill()
+        producer.terminate()
         
+        sys.exit(-1)
+    
+    downloadQueue.close(download_process_count)
+
+    for consumer in downloaders:
+        consumer.join() 
+    
+    notifyQueue.close(1)
+    producer.join() 

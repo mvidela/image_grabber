@@ -4,7 +4,7 @@ Created on Jun 16, 2011
 @author: Mariano Videla
 '''
 
-from multiprocessing import Queue
+from multiprocessing import Queue, Process
 
 class IMQueue(object):
     
@@ -34,4 +34,35 @@ class IMQueue(object):
         for i in range(process_count):
             self.queue.put(None)
         
+
+class ProcessGroup(object):
+    
+    def __init__(self, inQueue=None):
+        self.processes = []
+        self.inQueue = inQueue
         
+    def start_process(self, function, params, count=1):
+        for i in range(count):
+            
+            p = Process(target=function, args=params)
+            self.processes.append( p )
+    
+            p.start()
+        
+    def join(self):
+        
+        if self.inQueue:
+            self.inQueue.close()
+            
+            for p in self.processes:
+                self.inQueue.put(None)
+        
+        for p in self.processes:
+            p.join()
+    
+    def terminate(self):
+        
+        for p in self.processes:
+            p.terminate()
+            
+    
