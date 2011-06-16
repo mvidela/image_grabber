@@ -18,19 +18,33 @@ from PIL import Image # Require PIL module.
 
 from IMQueue import IMQueue
 
-headers = "'User-Agent' : 'Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.100 Safari/534.30'"
-#headers = ''
+headers = {'Content-Length': '0',
+           'User-Agent' : 'Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.100 Safari/534.30'
+}
+
+time_out = 5
 
 
 
 class CustomConnection(HTTPConnection):
     def __init__(self, host):
-            HTTPConnection.__init__(self, host)
+            HTTPConnection.__init__(self, host, timeout=time_out)
 
     def connect(self):
             print '====>opening new connection'
             HTTPConnection.connect(self)
 
+
+def pretty_size( byte_count ):
+    if byte_count < 1024:
+        return '%.2f bytes' %byte_count
+    
+    kcount = byte_count / 1024.0
+    
+    if kcount < 1024:
+        return '%.2f KB' %kcount
+    
+    return '%.2f MB' %(kcount / 1024.0)
 
 def download_image(id, inQueue, outQueue):
 
@@ -62,11 +76,10 @@ def download_image(id, inQueue, outQueue):
             conn = CustomConnection(host)
             current_host = host
         
-        conn.request('GET', url, headers)
+        conn.request('GET', url, None, headers)
         try:
             response = conn.getresponse()
-
-            outQueue.put('P%d - %s - %d' % (id, url, response.status))
+            outQueue.put('P%d - %s - %d - Length: %s' % (id, url, response.status, pretty_size(response.length) ) )
         
             response.read()
         except:
