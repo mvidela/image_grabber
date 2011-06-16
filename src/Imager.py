@@ -11,10 +11,9 @@ images and to generate thumbnails.
 
 from PIL import Image # Require PIL module.
 from httplib import HTTPConnection
-from multiprocessing import Process, Queue
+from multiprocessing import Process
 from urlparse import urlparse
 import sys
-import os.path
 
 from IMQueue import IMQueue, ProcessGroup
 
@@ -145,23 +144,14 @@ if __name__ == '__main__':
     downloaders = []
     
     downloadGroup = ProcessGroup(downloadQueue)
-    downloadGroup.start_process( target=download_image, 
+    downloadGroup.start_process( download_image, 
                                 (downloadQueue, thumbQueue), 
                                 download_process_count )
     
     thumbnailGroup = ProcessGroup(thumbQueue)
-    downloadGroup.start_process( target=create_thumbnail, 
+    downloadGroup.start_process( create_thumbnail, 
                                 (thumbQueue, notifyQueue), 
                                 thumb_process_count )
-    
-    for i in range(download_process_count):
-        downloaders.append(Process())
-        downloaders[i].start()
-        
-    for i in range(thumb_process_count):
-        downloaders.append(Process(target=create_thumbnail, args=(i, thumbQueue, notifyQueue)))
-        downloaders[i].start()
-    
     
     producer = Process(target=write_stdout, args=(notifyQueue,))
     producer.start()

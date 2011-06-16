@@ -43,10 +43,9 @@ class ProcessGroup(object):
         
     def start_process(self, function, params, count=1):
         for i in range(count):
-            
-            p = Process(target=function, args=params)
+            t = (i,)+params
+            p = Process(target=function, args=t)
             self.processes.append( p )
-    
             p.start()
         
     def join(self):
