@@ -9,96 +9,16 @@ images and to generate thumbnails.
 @author: Mariano Videla
 '''
 
-from PIL import Image # Require PIL module.
-from httplib import HTTPConnection
+
 from multiprocessing import Process
-from urlparse import urlparse
-import sys
+import sys, os
+import json
+import hashlib
 
-from IMQueue import IMQueue, ProcessGroup
+from grabbler import Grabbler
+from thumbnail import ThumbnailGenerator
+from IMQueue import IMQueue
 
-headers = {'Content-Length': '0',
-           'User-Agent' : 'Mozilla/5.0 (X11; Linux i686) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.100 Safari/534.30'
-}
-
-time_out = 5
-
-
-
-class CustomConnection(HTTPConnection):
-    def __init__(self, host):
-            HTTPConnection.__init__(self, host, timeout=time_out)
-
-    def connect(self):
-            print '====>opening new connection'
-            HTTPConnection.connect(self)
-
-
-def pretty_size( byte_count ):
-    if byte_count < 1024:
-        return '%.2f bytes' %byte_count
-    
-    kcount = byte_count / 1024.0
-    
-    if kcount < 1024:
-        return '%.2f KB' %kcount
-    
-    return '%.2f MB' %(kcount / 1024.0)
-
-def download_image(id, downloadQueue, outQueue):
-
-    conn = None    
-    current_host = None
-    
-    while True:
-        
-        queueObj = downloadQueue.get()
-        if queueObj is None:
-            break
-        
-        url, targetFile = queueObj
-        url_parts = urlparse(url)
-        
-        host = url_parts.hostname
-        if host is None:
-            continue
-        
-        if current_host != host:
-            if conn is not None:
-                conn.close()
-            
-            #current_host = None;
-            conn = None
-
-        if conn is None:
-            print '===>Creating new connection %s vs %s ' %(current_host, host)
-            conn = CustomConnection(host)
-            current_host = host
-        
-        conn.request('GET', url, None, headers)
-        try:
-            response = conn.getresponse()
-            outQueue.put('P%d - %s - %d - Length: %s' % (id, url, response.status, pretty_size(response.length) ) )
-        
-            response.read()
-        except:
-            print 'Error with %s.  Reseting connection' %url
-            conn = None
-            current_host = None
-            
-    print 'Download process finished'
-    
-def create_thumbnail(i, downloadQueue, outQueue):
-
-    while True:
-        
-        imgFile, width, height = downloadQueue.get()
-        img = Image.open(imgFile)
-        img.thumbnail((width, height))
-         
-        img.save(imgFile + ".thumb")
-
-         
 
 
 def write_stdout(queue):
@@ -109,22 +29,67 @@ def write_stdout(queue):
         response = queue.get()
         if response is None:
             break
-        sys.stdout.write('Got response: %s\n' % response)
+        
+        sys.stdout.write(json.dumps(response))
+        sys.stdout.write('\n')
         sys.stdout.flush()
+
+
+def parse_request(msg):
+    req = {}
     
-    #print 'Writer process ended'
+    try:
+        dict = json.loads(msg)
+        
+    except ValueError:
+        dict = {}
+        dict['url'] = msg
+        dict['tmpImgPath'] = '~/tmp2/images'
+        dict['olxId'] = '-1'
     
+    url = dict['url']
+    base_dir = dict['tmpImgPath']
+    olx_id = dict['olxId']
+    
+    
+    req['url']=url 
+    req['trgPath'] = get_image_path(base_dir, 'f', olx_id, url)
+    req['payload'] = dict
+    
+    return req
+
+    
+def get_image_path(baseDir, prefix, olx_id, url, extension='none'):
+    
+    if not os.path.exists(baseDir):
+        os.makedirs(baseDir)
+    
+    crc = get_hash(url)
+    fname = ('%s_%s_%s' % (prefix, olx_id, crc))
+    
+    return os.path.join( baseDir, fname )
+
+def get_hash(content):
+    
+    shaobj = hashlib.sha1()
+    shaobj.update(content)
+    
+    return shaobj.hexdigest()
+
 def enqueue_items():
     
     while not sys.stdin.closed:
         line = sys.stdin.readline()
         if line:        
             line = line.strip('\n')
-            downloadQueue.put([line, '/tmp/file0'])
+            
+            req = parse_request(line)
+            
+            downloadQueue.put(req)
         else:
             break
 
-    print 'Left the loop'
+    #print 'Left the loop'
             
 
 if __name__ == '__main__':
@@ -133,45 +98,26 @@ if __name__ == '__main__':
     thumbQueue = IMQueue()
     notifyQueue = IMQueue()
     
-    download_process_count = 20
-    if len(sys.argv) > 1:
-        download_process_count = int(sys.argv[1], 10)
-        
-    thumb_process_count = 5
-    if len(sys.argv) > 2:
-        thumb_process_count = int(sys.argv[2], 5)
-    
-    downloaders = []
-    
-    downloadGroup = ProcessGroup(downloadQueue)
-    downloadGroup.start_process( download_image, 
-                                (downloadQueue, thumbQueue), 
-                                download_process_count )
-    
-    thumbnailGroup = ProcessGroup(thumbQueue)
-    downloadGroup.start_process( create_thumbnail, 
-                                (thumbQueue, notifyQueue), 
-                                thumb_process_count )
+    grabbler = Grabbler(downloadQueue, thumbQueue, notifyQueue, 20)
+    thumbs = ThumbnailGenerator(thumbQueue, notifyQueue, notifyQueue, 5)
     
     producer = Process(target=write_stdout, args=(notifyQueue,))
     producer.start()
 
     try:    
-        
         enqueue_items()
         
     except KeyboardInterrupt:
         #kill all involved processes
-        downloadGroup.kill()
-        thumbnailGroup.kill()
-        producer.terminate()
+        for p in (grabbler, thumbs, producer):
+            p.terminate()
+            p.join()
         
         sys.exit(-1)
     
-    downloadQueue.close(download_process_count)
-
-    for consumer in downloaders:
-        consumer.join() 
-    
+    #join the process
+    grabbler.join()
+    thumbs.join()
+ 
     notifyQueue.close(1)
     producer.join() 

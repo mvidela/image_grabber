@@ -35,33 +35,4 @@ class IMQueue(object):
             self.queue.put(None)
         
 
-class ProcessGroup(object):
-    
-    def __init__(self, inQueue=None):
-        self.processes = []
-        self.inQueue = inQueue
-        
-    def start_process(self, function, params, count=1):
-        for i in range(count):
-            t = (i,)+params
-            p = Process(target=function, args=t)
-            self.processes.append( p )
-            p.start()
-        
-    def join(self):
-        
-        if self.inQueue:
-            self.inQueue.close()
-            
-            for p in self.processes:
-                self.inQueue.put(None)
-        
-        for p in self.processes:
-            p.join()
-    
-    def terminate(self):
-        
-        for p in self.processes:
-            p.terminate()
-            
     
