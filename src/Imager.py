@@ -76,7 +76,7 @@ def get_hash(content):
     
     return shaobj.hexdigest()
 
-def enqueue_items():
+def enqueue_items(queue):
     
     while not sys.stdin.closed:
         line = sys.stdin.readline()
@@ -85,7 +85,7 @@ def enqueue_items():
             
             req = parse_request(line)
             
-            downloadQueue.put(req)
+            queue.put(req)
         else:
             break
 
@@ -94,18 +94,16 @@ def enqueue_items():
 
 if __name__ == '__main__':
     
-    downloadQueue = IMQueue()
-    thumbQueue = IMQueue()
     notifyQueue = IMQueue()
     
-    grabbler = Grabbler(downloadQueue, thumbQueue, notifyQueue, 20)
-    thumbs = ThumbnailGenerator(thumbQueue, notifyQueue, notifyQueue, 5)
+    thumbs = ThumbnailGenerator(notifyQueue, notifyQueue, 5)
+    grabbler = Grabbler(thumbs.get_queue(), notifyQueue, 20)
     
     producer = Process(target=write_stdout, args=(notifyQueue,))
     producer.start()
 
     try:    
-        enqueue_items()
+        enqueue_items(grabbler.get_queue())
         
     except KeyboardInterrupt:
         #kill all involved processes

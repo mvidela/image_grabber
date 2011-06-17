@@ -11,9 +11,9 @@ Created on Jun 17, 2011
 '''
 
 from httplib import HTTPConnection
-from multiprocessing import Process
+from process import Process
 from urlparse import urlparse
-import os
+
 
 class CustomConnection(HTTPConnection):
     def __init__(self, host, time_out):
@@ -37,40 +37,29 @@ def pretty_size( byte_count ):
 
 
 
-class Grabbler(object):
+class Grabbler(Process):
     
-    def __init__(self, inQueue, outQueue, errQueue, proc_count=10, headers={}):
-        
-        self.inQueue = inQueue
+    def __init__(self, outQueue, errQueue, proc_count=10, headers={}):
+
         self.outQueue = outQueue
         self.errQueue = errQueue
-        self.processes = []
         self.headers = {}
         self.timeOut = 5
         
-        for i in range(proc_count):
+        Process.__init__(self, proc_count)
+        
+    def _loop(self):
+        
+        conn = None    
+        current_host = None
+        
+        while True:
+            queueItem = self.inQueue.get()
+            if not queueItem:
+                break
             
-            _args=(i, inQueue, outQueue, errQueue)
-            p = Process(target=self.download_image, args=_args)
-            self.processes.append( p )
-            p.start()
+            self.download_image(conn, current_host, queueItem)
         
-    def join(self):
-        
-        if self.inQueue:
-            self.inQueue.close()
-            
-            for p in self.processes:
-                self.inQueue.put(None)
-        
-        for p in self.processes:
-            p.join()
-    
-    def terminate(self):
-        
-        for p in self.processes:
-            p.terminate()
-            
     def send_error(self, msg, item):
         payload = item['payload']
         
@@ -88,57 +77,43 @@ class Grabbler(object):
         
         self.outQueue.put(req)
             
-    def download_image(self, id, downloadQueue, outQueue, errQueue):
+    def download_image(self, current_connection, current_host, queueItem):
 
-        conn = None    
-        current_host = None
+        url = queueItem['url']
+        url_parts = urlparse(url)
+
+        host = url_parts.hostname
         
-        while True:
+        if host is None:
+            msg = 'Invalid host name [%s]'% host
+            return self.send_error(msg, queueItem)
             
-            queueItem = downloadQueue.get()
-            if queueItem is None:
-                break
             
-            url = queueItem['url']
-            
-            url_parts = urlparse(url)
-            
-            host = url_parts.hostname
-            if host is None:
-                msg = 'Invalid host name [%s]'% host
-                self.send_error(msg, queueItem)
-                continue
-            
-            if current_host != host:
-                if conn is not None:
-                    conn.close()
-                
-                #current_host = None;
-                conn = None
+        if current_host != host and current_connection is not None:
+            current_connection.close()
+            current_connection = None
     
-            if conn is None:
-                #print '===>Creating new connection %s vs %s ' %(current_host, host)
-                conn = CustomConnection(host, self.timeOut)
-                current_host = host
+        if current_connection is None:
+            #print '===>Creating new connection %s vs %s ' %(current_host, host)
+            conn = CustomConnection(host, self.timeOut)
+            current_host = host
             
-            conn.request('GET', url, None, self.headers)
-            try:
-                response = conn.getresponse()
-                length = response.length
-                
-                f = open(queueItem['trgPath'], 'wb')
-                f.write( response.read() )
-                f.close()
-                
-                queueItem['payload']['download_status'] = response.status
-                queueItem['payload']['download_length'] = length
-                
-                self.download_success(queueItem)
+        conn.request('GET', url, None, self.headers)
+        try:
+            response = conn.getresponse()
+            length = response.length
             
-            except:
-                self.send_error('Unexpected error', queueItem)
-                conn = None
-                current_host = None
+            f = open(queueItem['trgPath'], 'wb')
+            f.write( response.read() )
+            f.close()
                 
-        #print 'Download process finished'
+            queueItem['payload']['download_status'] = response.status
+            queueItem['payload']['download_length'] = length
+            
+            self.download_success(queueItem)
         
+        except:
+            self.send_error('Unexpected error', queueItem)
+            conn = None
+            current_host = None
+                
