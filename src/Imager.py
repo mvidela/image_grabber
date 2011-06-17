@@ -44,8 +44,10 @@ def parse_request(msg):
     except ValueError:
         dict = {}
         dict['url'] = msg
-        dict['tmpImgPath'] = '~/tmp2/images'
+        dict['tmpImgPath'] = 'tmp_imgs'
         dict['olxId'] = '-1'
+        dict['imgPath'] = 'imgs'
+        dict['subfolder'] = 'A'
     
     url = dict['url']
     base_dir = dict['tmpImgPath']
